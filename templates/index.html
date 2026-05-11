@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tracking Everything</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #1a1a1a; }
+    header { background: #1a1a2e; color: white; padding: 1.2rem 2rem; }
+    header h1 { font-size: 1.4rem; font-weight: 600; }
+    header p { font-size: 0.85rem; color: #aaa; margin-top: 0.2rem; }
+    main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+
+    .card { background: white; border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .card h2 { font-size: 1rem; margin-bottom: 1rem; color: #333; }
+
+    form label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.3rem; color: #555; }
+    form input, form textarea {
+      width: 100%; padding: 0.6rem 0.8rem; border: 1px solid #ddd;
+      border-radius: 6px; font-size: 0.9rem; font-family: inherit;
+      margin-bottom: 1rem;
+    }
+    form textarea { resize: vertical; min-height: 80px; }
+    form input:focus, form textarea:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,.15); }
+    button.primary {
+      background: #4f46e5; color: white; border: none; padding: 0.6rem 1.4rem;
+      border-radius: 6px; font-size: 0.9rem; cursor: pointer; font-weight: 500;
+    }
+    button.primary:hover { background: #4338ca; }
+    button.primary:disabled { background: #a5b4fc; cursor: default; }
+
+    #status { margin-top: 0.8rem; font-size: 0.85rem; color: #555; min-height: 1.2em; }
+    #status.error { color: #dc2626; }
+    #status.ok { color: #16a34a; }
+
+    .job { background: white; border-radius: 10px; padding: 1.2rem 1.5rem; margin-bottom: 1rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .job-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+    .job-title { font-size: 0.9rem; font-weight: 600; color: #1a1a1a; word-break: break-all; }
+    .job-desc { font-size: 0.82rem; color: #666; margin-top: 0.2rem; }
+    .job-meta { display: flex; gap: 1rem; margin-top: 0.6rem; flex-wrap: wrap; }
+    .badge { background: #f3f4f6; border-radius: 4px; padding: 0.2rem 0.5rem; font-size: 0.75rem; color: #555; font-family: monospace; }
+    .job-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
+    button.sm { padding: 0.35rem 0.8rem; font-size: 0.8rem; border-radius: 5px; border: none; cursor: pointer; font-weight: 500; }
+    button.run { background: #ecfdf5; color: #16a34a; }
+    button.run:hover { background: #d1fae5; }
+    button.view { background: #eff6ff; color: #2563eb; }
+    button.view:hover { background: #dbeafe; }
+    button.del { background: #fef2f2; color: #dc2626; }
+    button.del:hover { background: #fee2e2; }
+
+    .records { margin-top: 0.8rem; border-top: 1px solid #f0f0f0; padding-top: 0.8rem; }
+    .records h4 { font-size: 0.8rem; color: #888; margin-bottom: 0.5rem; }
+    .record { font-size: 0.78rem; background: #f9fafb; border-radius: 4px; padding: 0.4rem 0.6rem; margin-bottom: 0.3rem; font-family: monospace; white-space: pre-wrap; word-break: break-all; color: #374151; }
+
+    .no-jobs { text-align: center; color: #aaa; padding: 2rem; font-size: 0.9rem; }
+
+    /* Modal */
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 100; align-items: center; justify-content: center; }
+    .modal-bg.open { display: flex; }
+    .modal { background: white; border-radius: 10px; padding: 1.5rem; width: 90%; max-width: 700px; max-height: 85vh; overflow: auto; }
+    .modal h3 { margin-bottom: 1rem; font-size: 1rem; }
+    .modal pre { background: #1e1e2e; color: #cdd6f4; padding: 1rem; border-radius: 6px; font-size: 0.78rem; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+    .modal-close { float: right; background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #888; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Tracking Everything</h1>
+  <p>Give the agent a URL and tell it what to track. It generates and schedules a script automatically.</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>New Tracking Job</h2>
+    <form id="create-form">
+      <label for="url">Website URL</label>
+      <input type="url" id="url" name="url" placeholder="https://example.com" required />
+      <label for="what">What to track</label>
+      <textarea id="what" name="what" placeholder="e.g. the price of the first product, the headline news titles, the number of open issues..." required></textarea>
+      <button class="primary" type="submit" id="submit-btn">Generate &amp; Schedule</button>
+      <div id="status"></div>
+    </form>
+  </div>
+
+  <div id="jobs-section">
+    {% if jobs %}
+      {% for job in jobs %}
+      <div class="job" id="job-{{ job.id }}">
+        <div class="job-header">
+          <div>
+            <div class="job-title">{{ job.url }}</div>
+            <div class="job-desc">{{ job.description }}</div>
+            <div class="job-meta">
+              <span class="badge">ID: {{ job.id }}</span>
+              <span class="badge">cron: {{ job.cron }}</span>
+              {% if job.next_run %}
+              <span class="badge">next: {{ job.next_run[:19].replace('T',' ') }}</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="job-actions">
+            <button class="sm run" onclick="runNow('{{ job.id }}')">Run now</button>
+            <button class="sm view" onclick="viewScript('{{ job.id }}')">Script</button>
+            <button class="sm del" onclick="deleteJob('{{ job.id }}')">Delete</button>
+          </div>
+        </div>
+        {% if job.records %}
+        <div class="records">
+          <h4>Last {{ job.records|length }} result(s)</h4>
+          {% for rec in job.records|reverse %}
+          <div class="record">{{ rec | tojson(indent=2) }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="no-jobs">No tracking jobs yet. Create one above.</div>
+    {% endif %}
+  </div>
+</main>
+
+<!-- Script modal -->
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h3>Generated Script</h3>
+    <pre id="modal-code"></pre>
+  </div>
+</div>
+
+<script>
+const form = document.getElementById('create-form');
+const status = document.getElementById('status');
+const submitBtn = document.getElementById('submit-btn');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Generating…';
+  status.textContent = 'Asking Claude to write a tracking script…';
+  status.className = '';
+
+  const data = new FormData(form);
+  try {
+    const res = await fetch('/create', { method: 'POST', body: data });
+    const json = await res.json();
+    if (!res.ok) {
+      status.textContent = 'Error: ' + (json.detail || res.statusText);
+      status.className = 'error';
+    } else {
+      status.textContent = `✓ Job ${json.job_id} created. Cron: ${json.cron}. Reloading…`;
+      status.className = 'ok';
+      setTimeout(() => location.reload(), 1500);
+    }
+  } catch (err) {
+    status.textContent = 'Network error: ' + err.message;
+    status.className = 'error';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Generate & Schedule';
+  }
+});
+
+async function runNow(id) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  try {
+    await fetch(`/run/${id}`, { method: 'POST' });
+    setTimeout(() => location.reload(), 800);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run now';
+  }
+}
+
+async function deleteJob(id) {
+  if (!confirm('Delete this tracking job?')) return;
+  await fetch(`/job/${id}`, { method: 'DELETE' });
+  document.getElementById(`job-${id}`).remove();
+}
+
+async function viewScript(id) {
+  const res = await fetch(`/script/${id}`);
+  const json = await res.json();
+  document.getElementById('modal-code').textContent = json.script;
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+}
+
+document.getElementById('modal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal();
+});
+</script>
+
+</body>
+</html>

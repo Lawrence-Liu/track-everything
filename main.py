@@ -2,9 +2,9 @@ import json
 import uuid
 from pathlib import Path
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, Response, render_template, request, jsonify, stream_with_context
 
-from agent import generate_tracking_script
+from agent import generate_tracking_script_stream
 from scheduler import scheduler, add_job, remove_job, get_jobs, run_script
 
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
@@ -40,53 +40,62 @@ def index():
                         records.append(json.loads(line))
                     except json.JSONDecodeError:
                         pass
-        jobs.append(
-            {
-                "id": job_id,
-                "url": info["url"],
-                "what": info["what"],
-                "description": info["description"],
-                "cron": info["cron"],
-                "next_run": scheduler_jobs.get(job_id, {}).get("next_run"),
-                "records": records[-10:],
-            }
-        )
+        jobs.append({
+            "id": job_id,
+            "url": info["url"],
+            "what": info["what"],
+            "description": info["description"],
+            "cron": info["cron"],
+            "next_run": scheduler_jobs.get(job_id, {}).get("next_run"),
+            "records": records[-10:],
+        })
     return render_template("index.html", jobs=jobs)
 
 
 @app.post("/create")
 def create_job():
     url = request.form.get("url", "").strip()
-    what_to_track = request.form.get("what", "").strip()
-    if not url or not what_to_track:
+    what = request.form.get("what", "").strip()
+    if not url or not what:
         return jsonify({"detail": "url and what are required"}), 400
 
     job_id = str(uuid.uuid4())[:8]
-    try:
-        result = generate_tracking_script(url, what_to_track, job_id)
-    except Exception as e:
-        return jsonify({"detail": f"Agent error: {e}"}), 500
 
-    script_path = SCRIPTS_DIR / f"{job_id}.py"
-    script_path.write_text(result["script"])
+    def generate():
+        try:
+            for event in generate_tracking_script_stream(url, what, job_id):
+                yield f"data: {json.dumps(event)}\n\n"
 
-    cron = result.get("suggested_schedule", "0 * * * *")
-    try:
-        add_job(job_id, str(script_path), cron)
-    except ValueError as e:
-        return jsonify({"detail": str(e)}), 400
+                if event["type"] == "done":
+                    result = event["result"]
+                    script_path = SCRIPTS_DIR / f"{job_id}.py"
+                    script_path.write_text(result["script"])
 
-    meta = load_jobs_meta()
-    meta[job_id] = {
-        "url": url,
-        "what": what_to_track,
-        "description": result["description"],
-        "cron": cron,
-        "script": str(script_path),
-    }
-    save_jobs_meta(meta)
+                    cron = result.get("suggested_schedule", "0 * * * *")
+                    try:
+                        add_job(job_id, str(script_path), cron)
+                    except ValueError as e:
+                        yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+                        return
 
-    return jsonify({"job_id": job_id, "description": result["description"], "cron": cron})
+                    meta = load_jobs_meta()
+                    meta[job_id] = {
+                        "url": url,
+                        "what": what,
+                        "description": result["description"],
+                        "cron": cron,
+                        "script": str(script_path),
+                    }
+                    save_jobs_meta(meta)
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )
 
 
 @app.post("/run/<job_id>")
@@ -140,7 +149,6 @@ def get_script(job_id: str):
 
 if __name__ == "__main__":
     scheduler.start()
-    # Restore persisted jobs on startup
     meta = load_jobs_meta()
     for job_id, info in meta.items():
         script_path = SCRIPTS_DIR / f"{job_id}.py"

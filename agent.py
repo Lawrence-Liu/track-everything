@@ -34,7 +34,7 @@ def generate_tracking_script_stream(url: str, what_to_track: str, job_id: str):
 
     try:
         proc = subprocess.Popen(
-            ["claude", "-p", prompt, "--output-format", "stream-json",
+            ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
              "--allowedTools", "WebFetch,Bash"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -101,10 +101,18 @@ def generate_tracking_script_stream(url: str, what_to_track: str, job_id: str):
         return
 
     # Strip markdown fences if present
-    if final_text.startswith("```"):
-        lines = final_text.split("\n")
-        end = -1 if lines[-1].strip() == "```" else len(lines)
-        final_text = "\n".join(lines[1:end])
+    if "```" in final_text:
+        import re
+        m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', final_text, re.DOTALL)
+        if m:
+            final_text = m.group(1)
+
+    # If there's preamble text before the JSON object, extract the JSON
+    if not final_text.startswith("{"):
+        import re
+        m = re.search(r'\{.*\}', final_text, re.DOTALL)
+        if m:
+            final_text = m.group()
 
     try:
         result = json.loads(final_text)
